@@ -1,0 +1,18 @@
+mainmenu "CANHUB"
+
+config HAS_SEGGER_RTT
+	default y
+
+config APP_CAN_LOOPBACK
+	bool "Run CAN controller in loopback mode (no bus needed)"
+	default y
+
+config APP_CAN_BITRATE
+	int "CAN bitrate (bit/s)"
+	default 500000
+
+config APP_HEARTBEAT_MS
+	int "Heartbeat period (ms)"
+	default 500
+
+source "Kconfig.zephyr"
