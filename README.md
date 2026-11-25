@@ -6,7 +6,7 @@ tested on real hardware through a Raspberry Pi bench reachable over a VPN.
 
 ![Bench](boardSetup1.jpg)
 
-## Architecture
+# Hardware Architecture
 
 ```mermaid
 flowchart LR
@@ -16,6 +16,81 @@ flowchart LR
   Pi -- "USB" --> PCAN["PEAK PCAN-USB"]
   PCAN -- "CAN 500 kbit/s" --> Board
 ```
+
+This project uses four main hardware components to develop, program, debug, and test CAN communication on the NXP MR-CANHUBK3 evaluation board.
+
+### 1. Raspberry Pi – Remote Gateway and Debug Host
+
+The Raspberry Pi acts as the remote hardware gateway between the development environment and the embedded target.
+It provides a Linux-based environment for running SEGGER J-Link debugging services and exposing the target's debugging interface over the network.
+
+**Main responsibilities:**
+- Hosts the SEGGER J-Link GDB Server.
+- Provides remote access to the target through the J-Link debugger.
+- Handles SWD debugging and firmware programming requests from the development host.
+- Provides access to the target's SEGGER RTT output over the network.
+- Uses NetBird VPN to establish secure connectivity with the Windows/WSL2 development environment.
+
+**Role in the project:**
+The Raspberry Pi allows firmware development, flashing, and debugging without requiring the developer's computer to be physically connected to the target board.
+
+### 2. NXP MR-CANHUBK3 – Embedded Target Board
+The NXP MR-CANHUBK3 is the main embedded hardware platform used for developing and testing CAN communication and telemetry applications.
+It is based on the NXP S32K344 automotive microcontroller, featuring an Arm Cortex-M7 processor with lockstep architecture.
+The board is designed for mobile robotics and automotive applications, providing multiple CAN FD interfaces and automotive Ethernet connectivity.
+
+**Main hardware features:**
+- NXP S32K344 automotive microcontroller.
+- Six CAN FD interfaces (CAN0–CAN5).
+- Multiple CAN transceiver technologies, including standard CAN FD, CAN FD with Signal Improvement Capability (SIC), and Secure CAN.
+- 100BASE-T1 automotive Ethernet interface.
+- UART, SPI, I2C, GPIO, and PWM interfaces.
+- Onboard RGB LED and other development peripherals.
+- External SWD/JTAG debugging connectors.
+
+**Main responsibilities:**
+- Runs the embedded application developed using Zephyr RTOS.
+- Implements CAN frame transmission and reception.
+- Processes and interprets incoming CAN messages.
+- Generates telemetry and diagnostic information.
+- Provides application-level status through SEGGER RTT.
+- Supports testing of multiple CAN communication interfaces.
+
+**Role in the project:**
+The MR-CANHUBK3 is the central embedded target. All CAN communication logic, firmware functionality, and application-level processing are executed on this board.
+
+### 3. SEGGER J-Link – Hardware Debugger and Programmer
+SEGGER J-Link is the hardware debugging and programming interface used to communicate with the S32K344 microcontroller.
+It provides access to the target through the Serial Wire Debug (SWD) interface and is connected to the Raspberry Pi, which hosts the J-Link GDB Server.
+
+**Main responsibilities:**
+- Programs firmware into the target microcontroller's flash memory.
+- Provides hardware debugging through SWD.
+- Supports breakpoints, stepping, register inspection, and memory inspection.
+- Enables remote debugging through the J-Link GDB Server.
+- Provides SEGGER Real-Time Transfer (RTT) for application diagnostics and telemetry.
+
+**Role in the project:**
+J-Link provides the low-level hardware interface required to program and debug the MR-CANHUBK3. By hosting the J-Link GDB Server on the Raspberry Pi, the debugger can be accessed remotely from the development environment.
+RTT also provides a communication channel for application logs and diagnostic messages without requiring a dedicated UART console connection.
+
+### 4. PEAK-System PCAN – CAN Bus Interface and Analyzer
+The PEAK-System PCAN interface provides the connection between the development computer and the physical CAN bus.
+It allows the developer to monitor, transmit, and analyze CAN messages exchanged between the MR-CANHUBK3 and other CAN nodes.
+The PCAN hardware connects to the development computer through USB and interfaces with the physical CAN network through its CAN connector.
+
+**Main responsibilities:**
+- Monitors CAN bus traffic in real time.
+- Transmits CAN frames to the MR-CANHUBK3.
+- Receives and displays CAN frames transmitted by the target.
+- Supports testing of standard CAN and, depending on the PCAN model, CAN FD communication.
+- Enables CAN protocol validation and troubleshooting.
+- Supports automated testing through PEAK-System PCAN-Basic APIs and compatible software tools.
+
+**Role in the project:**
+PCAN acts as the external CAN communication and testing interface. It allows the developer to interact with the physical CAN network independently of the J-Link debugging connection.
+It is particularly useful for validating CAN identifiers, payloads, transmission timing, reception filters, and communication reliability.
+
 
 ## CAN protocol
 
@@ -105,7 +180,52 @@ cansend can0 200#0200       # toggle the LED, expect ACK 201#0200
 - The J-Link RTT server accepts one client at a time.
 
 ## Roadmap
-(DBC, UDS over ISO-TP, bus statistics, CI)
+
+### Done
+- [x] Zephyr CAN node on MR-CANHUBK3 (S32K344): periodic heartbeat, command/ACK handling, bus-state reporting
+- [x] RTT logging over a remote J-Link (Raspberry Pi gateway reachable over a VPN)
+- [x] Hardware-in-the-loop test script (`tools/test_node.py`) running against the real CAN bus
+
+### Planned
+
+**1. Hardware-in-the-loop CI**
+Register the Raspberry Pi as a GitHub Actions self-hosted runner. Every push to `main` builds the
+firmware, flashes the board, runs `tools/test_node.py`, and uploads the CAN trace (`candump` log)
+as a build artifact. Success criterion: a green check on the repo means the firmware passed on
+real hardware.
+
+**2. DBC database (`docs/canhub.dbc`)**
+Describe the three messages (heartbeat `0x100`, command `0x200`, ACK `0x201`) in a standard DBC file
+and decode frames with `cantools` instead of hand-written `struct.unpack`. The same file then works
+in standard tools such as SavvyCAN or Vector software, and becomes the single source of truth for the protocol.
+
+**3. Bus statistics**
+Report TX/RX frame counts, error counters, bus-off recoveries and bus load in a new periodic message,
+for example on ID `0x110` (proposed). The test script checks that the counters behave sensibly.
+
+**4. Stress and fault tests**
+Flood the bus from the Pi and verify that no commands are lost and ACK latency stays bounded.
+Force a bus-off condition (for example by disconnecting the transceiver or injecting errors)
+and measure how long recovery takes. Results (frame loss, latency, recovery time) will be recorded here.
+
+**5. Diagnostics: UDS over ISO-TP**
+Add an ISO-TP transport (ISO 15765-2, using Zephyr's ISO-TP library) and a small UDS server
+supporting the following services:
+
+| Service | SID |
+|---|---|
+| DiagnosticSessionControl | 0x10 |
+| ECUReset | 0x11 |
+| ReadDataByIdentifier | 0x22 |
+| TesterPresent | 0x3E |
+
+Tested from the Pi with `udsoncan` or the `can-utils` ISO-TP tools.
+
+### Ideas (not committed)
+- Telemetry dashboard on the Pi, reachable over the VPN
+- CAN FD, which needs hardware beyond the classic PCAN-USB (for example two board channels wired together)
+- CAN bootloader / firmware update
+
 
 ## License
 MIT
