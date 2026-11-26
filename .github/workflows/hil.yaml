@@ -1,0 +1,50 @@
+name: HIL (build, flash, test)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: hil-bench
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  hil:
+    runs-on: [self-hosted, linux, ARM64, hil]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and flash
+        env:
+          BUILD_DIR: ${{ github.workspace }}/build
+          RESTART_GDBSERVER: "0"
+        run: tools/zflash.sh firmware
+
+      - name: Check CAN interface
+        run: ip link show can0 | grep -q "state UP"
+
+      - name: Run tests
+        run: |
+          source ~/zephyrproject/.venv/bin/activate
+          sleep 3                                  # let the board boot after flashing
+          candump -L can0 > candump.log &
+          DUMP=$!
+          set +e
+          python3 tools/test_node.py | tee test_output.txt
+          RESULT=${PIPESTATUS[0]}
+          kill $DUMP
+          exit $RESULT
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hil-logs
+          path: |
+            candump.log
+            test_output.txt
