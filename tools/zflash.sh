@@ -16,7 +16,11 @@ start_gdbserver() {   # always restore the debug server, even if build/flash fai
   nohup JLinkGDBServer -device S32K344 -if SWD -speed 4000 -port 2331 \
     -RTTTelnetPort 19021 -nogui </dev/null >/tmp/gdbserver.log 2>&1 &
 }
-trap start_gdbserver EXIT
+
+restore() {
+  if [ "${RESTART_GDBSERVER:-1}" = "1" ]; then start_gdbserver; fi
+}
+trap restore EXIT
 
 pkill -f JLinkGDBServer 2>/dev/null || true
 sleep 1
